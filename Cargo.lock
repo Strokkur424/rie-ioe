@@ -632,12 +632,12 @@ dependencies = [
 name = "fake-rie"
 version = "0.1.0"
 dependencies = [
+ "ab_glyph",
  "chrono",
  "imageproc",
  "poise",
  "reqwest",
  "serde",
- "titanf",
  "tokio",
  "toml",
  "tracing",
@@ -2811,12 +2811,6 @@ name = "tinyvec_macros"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
-
-[[package]]
-name = "titanf"
-version = "2.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03f4d29660d7921f908d9480fb8bd09e01bfffcb6024496ba195214ffec1244b"
 
 [[package]]
 name = "to-arraystring"
