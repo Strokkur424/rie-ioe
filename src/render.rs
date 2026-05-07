@@ -3,9 +3,13 @@ use crate::{config, Error};
 use ab_glyph::FontArc;
 use chrono::{DateTime, Datelike, TimeZone, Utc, Weekday};
 use config::get_config;
+use imageproc::drawing::draw_filled_rect_mut;
 use imageproc::image;
-use imageproc::image::imageops::FilterType;
-use imageproc::image::{DynamicImage, GenericImage, GenericImageView, ImageReader, Rgba};
+use imageproc::image::imageops::{overlay, FilterType};
+use imageproc::image::{
+  ColorType, DynamicImage, GenericImage, GenericImageView, ImageReader, Rgba,
+};
+use imageproc::rect::Rect;
 use poise::serenity_prelude::GuildId;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -36,11 +40,26 @@ fn load_background_image(guild_id: &GuildId) -> Result<DynamicImage, Error> {
     ))),
   }
 }
+
 pub fn process_image_for(data: VisaData) -> Result<DynamicImage, Error> {
   let img = load_background_image(&data.guild_id)?;
   let (width, height) = GenericImageView::dimensions(&img);
+
+  let mut bg_img = DynamicImage::new(width, height, ColorType::Rgba8);
+  draw_filled_rect_mut(
+    &mut bg_img,
+    Rect::at(0, 0).of_size(width, height),
+    get_config()
+      .find_visa(&data.guild_id)
+      .and_then(|v| v.background_color.clone())
+      .and_then(|hex| rgba_from_hex(hex.as_str()))
+      .unwrap_or_else(|| Rgba([0, 0, 0, 0])),
+  );
+  overlay(&mut bg_img, &img, 0, 0);
+
   let start_time = SystemTime::now();
 
+  let img = bg_img;
   let img = img.brighten(-50);
   let mut img = img.fast_blur(10.0);
 
@@ -282,4 +301,14 @@ fn round_corners(img: &mut DynamicImage, radius: u32) {
       }
     }
   }
+}
+
+fn rgba_from_hex(hex: &str) -> Option<Rgba<u8>> {
+  let hex = hex.trim_start_matches('#');
+
+  let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+  let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+  let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+
+  Some(Rgba([r, g, b, 255]))
 }

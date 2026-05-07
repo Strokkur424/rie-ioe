@@ -13,8 +13,6 @@ use std::io::Cursor;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use tracing::{error, info, warn};
-use tracing::log::log;
-use tracing_subscriber::util::SubscriberInitExt;
 
 mod commands;
 mod config;
@@ -110,7 +108,7 @@ pub(crate) async fn handle_member_join(
   let data = VisaData::create(http, cache, &guild_id, &new_member.user).await?;
   let rendered = render::process_image_for(data)?;
 
-  let mut buffer: Vec<u8> = Vec::with_capacity(1024 * 1024 * 32); // 32 KB
+  let mut buffer: Vec<u8> = Vec::with_capacity(1024 * 1024 * 1024 * 5); // 5 MB
   rendered.write_to(&mut Cursor::new(&mut buffer), ImageFormat::Png)?;
 
   http

@@ -1,7 +1,7 @@
 use crate::Error;
 use chrono::{DateTime, Utc};
 use imageproc::image::{DynamicImage, ImageReader};
-use poise::serenity_prelude::{Cache, CacheHttp, GuildId, Http, User};
+use poise::serenity_prelude::{Cache, GuildId, Http, User};
 use std::io::Cursor;
 
 pub struct VisaData {
