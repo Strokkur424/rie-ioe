@@ -11,12 +11,18 @@ pub struct VisaData {
   pub user_name: String,
   pub user_id: String,
   pub user_pfp: DynamicImage,
+  pub user_banner: Option<DynamicImage>,
   pub created_on: DateTime<Utc>,
   pub joined_on: DateTime<Utc>,
 }
 
 impl VisaData {
-  pub async fn create(http: &Http, cache: &Cache, guild_id: &GuildId, user: &User) -> Result<VisaData, Error> {
+  pub async fn create(
+    http: &Http,
+    cache: &Cache,
+    guild_id: &GuildId,
+    user: &User,
+  ) -> Result<VisaData, Error> {
     let (name, member_count) = {
       let guild = cache.guild(guild_id.clone()).unwrap();
       let name = guild.name.clone().into_string();
@@ -31,6 +37,7 @@ impl VisaData {
       user_name: user.name.clone().into_string(),
       user_id: user.id.to_string(),
       user_pfp: get_avatar(user).await?,
+      user_banner: get_banner_url(user).await?,
       created_on: user.id.created_at().to_utc(),
       joined_on: http
         .get_member(guild_id.clone(), user.id)
@@ -56,4 +63,19 @@ async fn get_avatar(user: &User) -> Result<DynamicImage, Error> {
       .with_guessed_format()?
       .decode()?,
   )
+}
+
+async fn get_banner_url(user: &User) -> Result<Option<DynamicImage>, Error> {
+  let url = user.banner_url();
+  if url.is_none() {
+    return Ok(None);
+  }
+  let url = url.unwrap();
+
+  let bytes = reqwest::get(url).await?.bytes().await?;
+  Ok(Some(
+    ImageReader::new(Cursor::new(bytes))
+      .with_guessed_format()?
+      .decode()?,
+  ))
 }

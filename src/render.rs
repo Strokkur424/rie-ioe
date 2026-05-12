@@ -1,48 +1,131 @@
 use crate::visa::VisaData;
 use crate::{config, Error};
-use ab_glyph::FontArc;
+use ab_glyph::{Font, FontArc, PxScale, ScaleFont};
 use chrono::{DateTime, Datelike, TimeZone, Utc, Weekday};
 use config::get_config;
-use imageproc::drawing::draw_filled_rect_mut;
-use imageproc::image;
+use imageproc::drawing;
+use imageproc::drawing::{draw_filled_rect_mut, text_size};
 use imageproc::image::imageops::{overlay, FilterType};
 use imageproc::image::{
-  ColorType, DynamicImage, GenericImage, GenericImageView, ImageReader, Rgba,
+  imageops, ColorType, DynamicImage, GenericImage, GenericImageView, ImageReader, Rgba,
 };
 use imageproc::rect::Rect;
 use poise::serenity_prelude::GuildId;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::SystemTime;
-use tracing::info;
+use tracing::{info, warn};
+use tracing_subscriber::fmt::time;
 
 static IMAGE_CACHE: OnceLock<Mutex<HashMap<GuildId, DynamicImage>>> = OnceLock::new();
 
-fn load_background_image(guild_id: &GuildId) -> Result<DynamicImage, Error> {
+fn resize_image_to(src: DynamicImage, data: &VisaData) -> DynamicImage {
+  let maybe_visa = get_config().find_visa(&data.guild_id);
+  if maybe_visa.is_none() {
+    return src;
+  }
+
+  let visa = maybe_visa.unwrap();
+  if let Some(res) = &visa.fixed_resolution {
+    if res.len() != 2 {
+      warn!(
+        "Invalid fixed resolution. Provided {}, but expected 2 elements!",
+        res.len()
+      );
+      return src;
+    }
+
+    let width: u32 = *res.get(0).unwrap();
+    let height: u32 = *res.get(1).unwrap();
+    let (src_width, src_height) = GenericImageView::dimensions(&src);
+
+    // Scale
+    let scale_x = width as f32 / src_width as f32;
+    let scale_y = height as f32 / src_height as f32;
+
+    let scale = f32::max(scale_x, scale_y);
+    let resized_width = (src_width as f32 * scale).round() as u32;
+    let resized_height = (src_height as f32 * scale).round() as u32;
+
+    // Case 1: src image dimensions are larger.
+    //   --> Downsample to fit
+    let resized = if src_width > width && src_height > height {
+      src.resize_exact(
+        resized_width,
+        resized_height,
+        FilterType::Lanczos3, // high-quality downsampling
+      )
+    }
+    // Case 2: at least one src image dimension is smaller.
+    //   --> Upsample fit
+    else {
+      src.resize_exact(
+        resized_width,
+        resized_height,
+        FilterType::CatmullRom, // decent quality upsampling
+      )
+    };
+
+    // Crop to dimensions (centered)
+    let crop_x = (resized_width.saturating_sub(width)) / 2;
+    let crop_y = (resized_height.saturating_sub(height)) / 2;
+
+    let cropped = imageops::crop_imm(&resized, crop_x, crop_y, width, height).to_image();
+    return DynamicImage::ImageRgba8(cropped);
+  }
+
+  src
+}
+
+fn get_background_image(data: &VisaData) -> Result<DynamicImage, Error> {
+  if let Some(banner) = &data.user_banner {
+    return Ok(pre_process_bg_image(resize_image_to(banner.clone(), data)));
+  }
+
   let mut map = IMAGE_CACHE
     .get_or_init(|| Mutex::new(HashMap::new()))
     .lock()
     .map_err(|_| Error::from("Failed to acquire lock for image cache."))?;
 
-  if let Some(img) = map.get(&guild_id) {
+  if let Some(img) = map.get(&data.guild_id) {
     return Ok(img.clone());
   }
 
-  match get_config().find_visa(&guild_id) {
+  match get_config().find_visa(&data.guild_id) {
     Some(visa) => {
-      let img: DynamicImage = ImageReader::open(visa.background_image.as_str())?.decode()?;
-      map.insert(guild_id.clone(), img.clone());
+      let img: DynamicImage = pre_process_bg_image(resize_image_to(
+        ImageReader::open(visa.background_image.as_str())?.decode()?,
+        data,
+      ));
+      map.insert(data.guild_id.clone(), img.clone());
       Ok(img)
     }
     None => Err(Error::from(format!(
       "No background image set for guild with id {}",
-      guild_id
+      data.guild_id
     ))),
   }
 }
 
+fn compute_text_size(font: &FontArc, scale: f32, text: &str) -> (f32, f32) {
+  let scaled_font = font.as_scaled(scale);
+  let width = text
+    .chars()
+    .map(|c| scaled_font.h_advance(font.glyph_id(c)))
+    .sum();
+  let height = scaled_font.ascent() - scaled_font.descent();
+
+  (width, height)
+}
+
+fn pre_process_bg_image(img: DynamicImage) -> DynamicImage {
+  let blur_rad: f32 = (img.width() * img.height()) as f32 / 100000.0;
+  img.brighten(-30).fast_blur(blur_rad)
+}
+
 pub fn process_image_for(data: VisaData) -> Result<DynamicImage, Error> {
-  let img = load_background_image(&data.guild_id)?;
+  let start_time = SystemTime::now();
+  let mut img = get_background_image(&data)?;
   let (width, height) = GenericImageView::dimensions(&img);
 
   let mut bg_img = DynamicImage::new(width, height, ColorType::Rgba8);
@@ -57,19 +140,15 @@ pub fn process_image_for(data: VisaData) -> Result<DynamicImage, Error> {
   );
   overlay(&mut bg_img, &img, 0, 0);
 
-  let start_time = SystemTime::now();
-
-  let img = bg_img;
-  let img = img.brighten(-50);
-  let mut img = img.fast_blur(10.0);
-
   const FONT_DATA_BOLD: &[u8] = include_bytes!("./fonts/jetbrains-mono/JetBrainsMono-Bold.ttf");
   const FONT_DATA_MEDIUM: &[u8] = include_bytes!("./fonts/jetbrains-mono/JetBrainsMono-Medium.ttf");
 
   let font_bold = FontArc::try_from_slice(&FONT_DATA_BOLD)?;
   let font_medium = FontArc::try_from_slice(&FONT_DATA_MEDIUM)?;
 
-  imageproc::drawing::draw_text_mut(
+  let font_size_date = height as f32 * 0.08;
+
+  drawing::draw_text_mut(
     &mut img,
     Rgba([0xff, 0xff, 0xff, 0xff]),
     (width as f32 * 0.03) as i32,
@@ -79,40 +158,44 @@ pub fn process_image_for(data: VisaData) -> Result<DynamicImage, Error> {
     format!("#{}", data.member_count).as_str(),
   );
 
-  let image_size = (height as f32 * 0.65) as u32;
+  let image_size = (height as f32 * 0.7) as u32;
   add_profile_picture(
     &data,
     &mut img,
     (width as f32 * 0.03) as i64,
-    (height as f32 * 0.4 * 0.5) as i64,
+    (height as f32 * 0.3 * 0.6) as i64,
     image_size,
   );
 
+  let text_anchor_x = (width as f32 * 0.05) as i32 + image_size as i32;
+  let text_anchor_y = (height as f32 * 0.25) as i32;
+
   // Welcome to [Server]!
-  imageproc::drawing::draw_text_mut(
+  let welcome_font_size = height as f32 * 0.07;
+  drawing::draw_text_mut(
     &mut img,
     Rgba([0xff, 0xff, 0xff, 0xff]),
-    (width as f32 * 0.05) as i32 + image_size as i32,
-    (height as f32 * 0.25) as i32,
-    height as f32 * 0.06,
+    text_anchor_x,
+    text_anchor_y,
+    welcome_font_size,
     &font_medium,
-    "Welcome to",
+    "Welcome to ",
   );
-  imageproc::drawing::draw_text_mut(
+  drawing::draw_text_mut(
     &mut img,
     Rgba([0xff, 0xff, 0xff, 0xff]),
-    (width as f32 * 0.22) as i32 + image_size as i32,
-    (height as f32 * 0.25) as i32,
-    height as f32 * 0.06,
+    text_anchor_x + compute_text_size(&font_medium, welcome_font_size, "Welcome to ").0 as i32,
+    text_anchor_y,
+    welcome_font_size,
     &font_bold,
     format!("{}!", data.server_name).as_str(),
   );
 
   // username
-  imageproc::drawing::draw_text_mut(
+  drawing::draw_text_mut(
     &mut img,
     Rgba([0xff, 0xff, 0xff, 0xff]),
-    (width as f32 * 0.05) as i32 + image_size as i32,
+    text_anchor_x,
     (height as f32 * 0.35) as i32,
     height as f32 * 0.1,
     &font_bold,
@@ -120,10 +203,10 @@ pub fn process_image_for(data: VisaData) -> Result<DynamicImage, Error> {
   );
 
   // user id
-  imageproc::drawing::draw_text_mut(
+  drawing::draw_text_mut(
     &mut img,
     Rgba([0xff, 0xff, 0xff, 0xff]),
-    (width as f32 * 0.05) as i32 + image_size as i32,
+    text_anchor_x,
     (height as f32 * 0.45) as i32,
     height as f32 * 0.04,
     &font_medium,
@@ -131,61 +214,71 @@ pub fn process_image_for(data: VisaData) -> Result<DynamicImage, Error> {
   );
 
   // Created on
-  imageproc::drawing::draw_text_mut(
+  let binding = format_time_passed(&data.created_on);
+  let time_formatted = binding.as_str();
+  let y_anchor = (height as f32 * 0.55) as i32;
+  let small_font_scale = height as f32 * 0.04;
+  let medium_font_scale = height as f32 * 0.05;
+
+  drawing::draw_text_mut(
     &mut img,
     Rgba([0xff, 0xff, 0xff, 0xff]),
-    (width as f32 * 0.05) as i32 + image_size as i32,
-    (height as f32 * 0.56) as i32,
-    height as f32 * 0.04,
+    text_anchor_x + 10,
+    y_anchor + 2,
+    small_font_scale,
     &font_medium,
     "Created on",
   );
-  imageproc::drawing::draw_text_mut(
+  drawing::draw_text_mut(
     &mut img,
     Rgba([0xff, 0xff, 0xff, 0xff]),
-    (width as f32 * 0.05) as i32 + image_size as i32,
-    (height as f32 * 0.60) as i32,
-    height as f32 * 0.06,
+    text_anchor_x + (width as f32 * 0.3) as i32,
+    y_anchor,
+    medium_font_scale,
+    &font_medium,
+    time_formatted,
+  );
+  drawing::draw_text_mut(
+    &mut img,
+    Rgba([0xff, 0xff, 0xff, 0xff]),
+    text_anchor_x,
+    y_anchor + (compute_text_size(&font_medium, medium_font_scale, time_formatted).1 * 0.8) as i32,
+    font_size_date,
     &font_bold,
     format_created_on(&data.created_on).as_str(),
   );
-  imageproc::drawing::draw_text_mut(
-    &mut img,
-    Rgba([0xff, 0xff, 0xff, 0xff]),
-    (width as f32 * 0.35) as i32 + image_size as i32,
-    (height as f32 * 0.55) as i32,
-    height as f32 * 0.045,
-    &font_medium,
-    format_time_passed(&data.created_on).as_str(),
-  );
 
   // Join
-  imageproc::drawing::draw_text_mut(
+  let binding = format_time(&data.joined_on);
+  let time_formatted = binding.as_str();
+  let y_anchor = (height as f32 * 0.7) as i32;
+
+  drawing::draw_text_mut(
     &mut img,
     Rgba([0xff, 0xff, 0xff, 0xff]),
-    (width as f32 * 0.05) as i32 + image_size as i32,
-    (height as f32 * 0.7) as i32,
-    height as f32 * 0.04,
+    text_anchor_x + 10,
+    y_anchor + 2,
+    small_font_scale,
     &font_medium,
     "Joined on",
   );
-  imageproc::drawing::draw_text_mut(
+  drawing::draw_text_mut(
     &mut img,
     Rgba([0xff, 0xff, 0xff, 0xff]),
-    (width as f32 * 0.05) as i32 + image_size as i32,
-    (height as f32 * 0.74) as i32,
-    height as f32 * 0.06,
+    text_anchor_x + (width as f32 * 0.3) as i32,
+    y_anchor,
+    medium_font_scale,
+    &font_medium,
+    time_formatted,
+  );
+  drawing::draw_text_mut(
+    &mut img,
+    Rgba([0xff, 0xff, 0xff, 0xff]),
+    text_anchor_x,
+    y_anchor + (compute_text_size(&font_medium, medium_font_scale, time_formatted).1 * 0.8) as i32,
+    font_size_date,
     &font_bold,
     format_created_on(&data.joined_on).as_str(),
-  );
-  imageproc::drawing::draw_text_mut(
-    &mut img,
-    Rgba([0xff, 0xff, 0xff, 0xff]),
-    (width as f32 * 0.35) as i32 + image_size as i32,
-    (height as f32 * 0.69) as i32,
-    height as f32 * 0.045,
-    &font_medium,
-    format_time(&data.joined_on).as_str(),
   );
 
   info!(
@@ -198,8 +291,8 @@ pub fn process_image_for(data: VisaData) -> Result<DynamicImage, Error> {
 fn add_profile_picture(data: &VisaData, img: &mut DynamicImage, x: i64, y: i64, scale_to: u32) {
   let pfp = data.user_pfp.clone();
   let mut pfp = pfp.resize(scale_to, scale_to, FilterType::Triangle);
-  round_corners(&mut pfp, (scale_to as f64 * 0.1) as u32);
-  image::imageops::overlay(img, &pfp, x, y);
+  round_corners(&mut pfp, (scale_to as f64 * 0.13) as u32);
+  overlay(img, &pfp, x, y);
 }
 
 fn format_time<T: TimeZone>(time: &DateTime<T>) -> String {

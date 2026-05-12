@@ -34,6 +34,8 @@ pub struct Visa {
   pub background_image: String,
   #[serde(rename = "background-color")]
   pub background_color: Option<String>,
+  #[serde(rename = "fixed-resolution")]
+  pub fixed_resolution: Option<Vec<u32>>
 }
 
 impl Config {
