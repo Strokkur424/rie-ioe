@@ -629,22 +629,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fake-rie"
-version = "0.1.0"
-dependencies = [
- "ab_glyph",
- "chrono",
- "imageproc",
- "poise",
- "reqwest",
- "serde",
- "tokio",
- "toml",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "fax"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2192,6 +2176,22 @@ name = "rgb"
 version = "0.8.53"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47b34b781b31e5d73e9fbc8689c70551fd1ade9a19e3e28cfec8580a79290cc4"
+
+[[package]]
+name = "rie-ioe"
+version = "0.1.0"
+dependencies = [
+ "ab_glyph",
+ "chrono",
+ "imageproc",
+ "poise",
+ "reqwest",
+ "serde",
+ "tokio",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+]
 
 [[package]]
 name = "ring"

@@ -1,10 +1,10 @@
 use crate::visa::VisaData;
 use crate::{config, Error};
-use ab_glyph::{Font, FontArc, PxScale, ScaleFont};
+use ab_glyph::{Font, FontArc, ScaleFont};
 use chrono::{DateTime, Datelike, TimeZone, Utc, Weekday};
 use config::get_config;
 use imageproc::drawing;
-use imageproc::drawing::{draw_filled_rect_mut, text_size};
+use imageproc::drawing::{draw_filled_rect_mut};
 use imageproc::image::imageops::{overlay, FilterType};
 use imageproc::image::{
   imageops, ColorType, DynamicImage, GenericImage, GenericImageView, ImageReader, Rgba,
@@ -15,7 +15,6 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::SystemTime;
 use tracing::{info, warn};
-use tracing_subscriber::fmt::time;
 
 static IMAGE_CACHE: OnceLock<Mutex<HashMap<GuildId, DynamicImage>>> = OnceLock::new();
 

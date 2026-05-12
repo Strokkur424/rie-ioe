@@ -1,0 +1,9 @@
+[bot]
+token = ""
+
+#[[visa]]
+#guild-id = ""
+#channel-id = ""
+#background-image = "./visa/background.png"
+#fixed-resolution = [ 1100, 500 ]
+#background-color = "#000000"
