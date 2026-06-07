@@ -7,7 +7,7 @@ use imageproc::drawing;
 use imageproc::drawing::{draw_filled_rect_mut};
 use imageproc::image::imageops::{overlay, FilterType};
 use imageproc::image::{
-  imageops, ColorType, DynamicImage, GenericImage, GenericImageView, ImageReader, Rgba,
+  imageops, ColorType, DynamicImage, GenericImageView, ImageReader, Rgba,
 };
 use imageproc::rect::Rect;
 use poise::serenity_prelude::GuildId;
@@ -290,7 +290,7 @@ pub fn process_image_for(data: VisaData) -> Result<DynamicImage, Error> {
 fn add_profile_picture(data: &VisaData, img: &mut DynamicImage, x: i64, y: i64, scale_to: u32) {
   let pfp = data.user_pfp.clone();
   let mut pfp = pfp.resize(scale_to, scale_to, FilterType::Triangle);
-  round_corners(&mut pfp, (scale_to as f64 * 0.13) as u32);
+  pfp = round_corners(pfp, (scale_to as f64 * 0.13) as u32);
   overlay(img, &pfp, x, y);
 }
 
@@ -367,8 +367,9 @@ fn format_created_on<T: TimeZone>(time: &DateTime<T>) -> String {
   )
 }
 
-fn round_corners(img: &mut DynamicImage, radius: u32) {
-  let (w, h) = GenericImageView::dimensions(img);
+fn round_corners(img: DynamicImage, radius: u32) -> DynamicImage {
+  let mut rgba = img.to_rgba8();
+  let (w, h) = rgba.dimensions();
 
   for y in 0..h {
     for x in 0..w {
@@ -389,10 +390,12 @@ fn round_corners(img: &mut DynamicImage, radius: u32) {
       };
 
       if dx * dx + dy * dy > radius * radius {
-        img.put_pixel(x, y, Rgba([0, 0, 0, 0]));
+        rgba.put_pixel(x, y, Rgba([0, 0, 0, 0]));
       }
     }
   }
+
+  DynamicImage::ImageRgba8(rgba)
 }
 
 fn rgba_from_hex(hex: &str) -> Option<Rgba<u8>> {
